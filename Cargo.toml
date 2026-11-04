@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/valheim-net"]
+members = ["crates/*"]
 
 [workspace.package]
 edition = "2021"
@@ -10,6 +10,8 @@ rust-version = "1.80"
 
 [workspace.dependencies]
 valheim-net = { path = "crates/valheim-net" }
+valheim-playfab = { path = "crates/valheim-playfab" }
+playfab-party = { path = "crates/playfab-party" }
 anyhow = "1"
 thiserror = "1"
 tracing = "0.1"

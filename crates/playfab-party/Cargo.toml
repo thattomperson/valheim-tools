@@ -1,0 +1,11 @@
+[package]
+name = "playfab-party"
+description = "Minimal runtime-loaded bindings to Microsoft's PlayFab Party C API (libparty.so): just enough for a data endpoint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+libloading = "0.8"
+thiserror.workspace = true
+tracing.workspace = true
