@@ -14,7 +14,11 @@ use flate2::Compression;
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ReadError {
     #[error("unexpected end of package (wanted {wanted} bytes at offset {pos}, have {len})")]
-    Eof { pos: usize, wanted: usize, len: usize },
+    Eof {
+        pos: usize,
+        wanted: usize,
+        len: usize,
+    },
     #[error("invalid 7-bit encoded length")]
     BadVarint,
     #[error("negative length {0}")]
@@ -36,7 +40,11 @@ pub struct Vector3 {
 }
 
 impl Vector3 {
-    pub const ZERO: Vector3 = Vector3 { x: 0.0, y: 0.0, z: 0.0 };
+    pub const ZERO: Vector3 = Vector3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
 
     pub fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
@@ -215,7 +223,11 @@ impl<'a> ZReader<'a> {
 
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
         if self.remaining() < n {
-            return Err(ReadError::Eof { pos: self.pos, wanted: n, len: self.buf.len() });
+            return Err(ReadError::Eof {
+                pos: self.pos,
+                wanted: n,
+                len: self.buf.len(),
+            });
         }
         let s = &self.buf[self.pos..self.pos + n];
         self.pos += n;
@@ -302,16 +314,25 @@ impl<'a> ZReader<'a> {
     pub fn read_compressed_package(&mut self) -> Result<ZPackage> {
         let gz = self.read_bytes()?;
         let mut out = Vec::new();
-        GzDecoder::new(gz).read_to_end(&mut out).map_err(|_| ReadError::Decompress)?;
+        GzDecoder::new(gz)
+            .read_to_end(&mut out)
+            .map_err(|_| ReadError::Decompress)?;
         Ok(ZPackage::from_bytes(out))
     }
 
     pub fn read_vec3(&mut self) -> Result<Vector3> {
-        Ok(Vector3 { x: self.read_f32()?, y: self.read_f32()?, z: self.read_f32()? })
+        Ok(Vector3 {
+            x: self.read_f32()?,
+            y: self.read_f32()?,
+            z: self.read_f32()?,
+        })
     }
 
     pub fn read_zdoid(&mut self) -> Result<ZDOID> {
-        Ok(ZDOID { user_id: self.read_i64()?, id: self.read_u32()? })
+        Ok(ZDOID {
+            user_id: self.read_i64()?,
+            id: self.read_u32()?,
+        })
     }
 
     pub fn read_string_list(&mut self) -> Result<Vec<String>> {

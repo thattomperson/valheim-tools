@@ -181,12 +181,18 @@ impl ReliableChannel {
         if seq != self.next_recv_seq {
             // Ahead of what we expect: buffer it. Behind: a duplicate.
             if seq.wrapping_sub(self.next_recv_seq) < i32::MAX as u32 {
-                self.out_of_order.entry(seq).or_insert(Delivered { kind, body: body.to_vec() });
+                self.out_of_order.entry(seq).or_insert(Delivered {
+                    kind,
+                    body: body.to_vec(),
+                });
             }
             out.outgoing.push(self.ack());
             return Ok(out);
         }
-        out.delivered.push(Delivered { kind, body: body.to_vec() });
+        out.delivered.push(Delivered {
+            kind,
+            body: body.to_vec(),
+        });
         self.next_recv_seq = self.next_recv_seq.wrapping_add(1);
         while let Some(d) = self.out_of_order.remove(&self.next_recv_seq) {
             out.delivered.push(d);
@@ -229,7 +235,11 @@ mod tests {
     use super::*;
 
     fn pair() -> (ReliableChannel, ReliableChannel, Instant) {
-        (ReliableChannel::new(), ReliableChannel::new(), Instant::now())
+        (
+            ReliableChannel::new(),
+            ReliableChannel::new(),
+            Instant::now(),
+        )
     }
 
     #[test]
@@ -246,7 +256,13 @@ mod tests {
         let (mut a, mut b, now) = pair();
         let w = a.send(TYPE_DATA, b"one", now);
         let r = b.receive(&w, now).unwrap();
-        assert_eq!(r.delivered, vec![Delivered { kind: TYPE_DATA, body: b"one".to_vec() }]);
+        assert_eq!(
+            r.delivered,
+            vec![Delivered {
+                kind: TYPE_DATA,
+                body: b"one".to_vec()
+            }]
+        );
         assert_eq!(r.outgoing, vec![vec![1, 0, 0, 0, TYPE_ACK]]);
         assert_eq!(a.in_flight_bytes(), 3 + TRAILER_LEN);
         a.receive(&r.outgoing[0], now).unwrap();
@@ -305,6 +321,9 @@ mod tests {
     #[test]
     fn bogus_ack_is_an_error() {
         let (mut a, _, now) = pair();
-        assert_eq!(a.receive(&[5, 0, 0, 0, TYPE_ACK], now).unwrap_err(), FrameError::BogusAck);
+        assert_eq!(
+            a.receive(&[5, 0, 0, 0, TYPE_ACK], now).unwrap_err(),
+            FrameError::BogusAck
+        );
     }
 }

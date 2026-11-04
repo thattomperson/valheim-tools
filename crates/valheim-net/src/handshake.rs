@@ -88,7 +88,11 @@ pub struct SimulationDistance {
 
 impl Default for SimulationDistance {
     fn default() -> Self {
-        Self { near: 2, far: 2, classic: true }
+        Self {
+            near: 2,
+            far: 2,
+            classic: true,
+        }
     }
 }
 
@@ -198,7 +202,11 @@ pub fn parse_player_list(r: &mut ZReader<'_>) -> Result<Vec<PlayerInfo>> {
                 display_name: r.read_string()?,
                 server_assigned_display_name: r.read_string()?,
                 playfab_id: r.read_string()?,
-                position: if r.read_bool()? { Some(r.read_vec3()?) } else { None },
+                position: if r.read_bool()? {
+                    Some(r.read_vec3()?)
+                } else {
+                    None
+                },
             })
         })
         .collect()
@@ -227,7 +235,14 @@ mod tests {
         assert_eq!(r.read_vec3().unwrap(), Vector3::ZERO);
         assert_eq!(r.read_string().unwrap(), "Bot");
         assert_eq!(r.read_string().unwrap(), "ABC");
-        assert_eq!((r.read_i32().unwrap(), r.read_i32().unwrap(), r.read_bool().unwrap()), (2, 2, true));
+        assert_eq!(
+            (
+                r.read_i32().unwrap(),
+                r.read_i32().unwrap(),
+                r.read_bool().unwrap()
+            ),
+            (2, 2, true)
+        );
         assert_eq!(r.read_string().unwrap(), "");
         assert_eq!(r.read_string().unwrap(), "");
         assert_eq!(r.read_bytes().unwrap(), &[] as &[u8]);
