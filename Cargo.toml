@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/valheim-net"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+rust-version = "1.80"
+
+[workspace.dependencies]
+valheim-net = { path = "crates/valheim-net" }
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"

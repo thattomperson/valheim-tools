@@ -1,0 +1,12 @@
+[package]
+name = "valheim-net"
+description = "Sans-IO implementation of the Valheim client protocol (ZPackage, ZRpc, crossplay framing, handshake, chat)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+flate2 = "1"
+md-5 = "0.10"
+thiserror.workspace = true
+tracing.workspace = true
