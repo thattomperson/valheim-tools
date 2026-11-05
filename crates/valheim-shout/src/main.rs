@@ -196,180 +196,192 @@ fn run_party(args: &ShoutArgs, pf: &PlayFab, target: &JoinTarget) -> Result<()> 
     let mut shouted_at: Option<Instant> = None;
     let mut next_scan = started;
 
-    let outcome = loop {
-        let now = Instant::now();
-        for ev in party.poll()? {
-            match ev {
-                PartyEvent::ConnectToNetworkCompleted { result, .. } => {
-                    if !result.ok() {
-                        bail!("could not join the Party network: {result}");
+    // Errors break out through the closure so the goodbye below always runs.
+    #[allow(clippy::redundant_closure_call)]
+    let outcome = (|| -> Result<()> {
+        loop {
+            let now = Instant::now();
+            for ev in party.poll()? {
+                match ev {
+                    PartyEvent::ConnectToNetworkCompleted { result, .. } => {
+                        if !result.ok() {
+                            bail!("could not join the Party network: {result}");
+                        }
+                        tracing::info!("Party network joined, authenticating");
+                        party.authenticate_local_user(
+                            network,
+                            user,
+                            &target.network.invitation_id,
+                        )?;
+                        party.create_endpoint(network, user)?;
                     }
-                    tracing::info!("Party network joined, authenticating");
-                    party.authenticate_local_user(network, user, &target.network.invitation_id)?;
-                    party.create_endpoint(network, user)?;
-                }
-                PartyEvent::AuthenticateLocalUserCompleted { result } => {
-                    if !result.ok() {
-                        bail!("Party authentication failed: {result}");
+                    PartyEvent::AuthenticateLocalUserCompleted { result } => {
+                        if !result.ok() {
+                            bail!("Party authentication failed: {result}");
+                        }
+                        tracing::info!("authenticated to Party network");
                     }
-                    tracing::info!("authenticated to Party network");
-                }
-                PartyEvent::CreateEndpointCompleted { result, endpoint } => {
-                    if !result.ok() {
-                        bail!("could not create our endpoint: {result}");
+                    PartyEvent::CreateEndpointCompleted { result, endpoint } => {
+                        if !result.ok() {
+                            bail!("could not create our endpoint: {result}");
+                        }
+                        tracing::info!("our endpoint is up");
+                        local = Some(endpoint);
                     }
-                    tracing::info!("our endpoint is up");
-                    local = Some(endpoint);
+                    PartyEvent::EndpointCreated {
+                        endpoint,
+                        entity_id,
+                        is_local,
+                    } => {
+                        tracing::debug!(?entity_id, is_local, "endpoint created");
+                        if !is_local
+                            && entity_id
+                                .as_deref()
+                                .is_some_and(|id| id.eq_ignore_ascii_case(&target.server_entity_id))
+                        {
+                            tracing::info!("found the server endpoint");
+                            server = Some(endpoint);
+                        }
+                    }
+                    PartyEvent::EndpointDestroyed { endpoint, reason }
+                        if Some(endpoint) == server =>
+                    {
+                        bail!("server endpoint went away (reason {reason})");
+                    }
+                    PartyEvent::MessageReceived { sender, data } if Some(sender) == server => {
+                        session.receive(&data, now)?;
+                    }
+                    PartyEvent::NetworkDestroyed {
+                        reason,
+                        error_detail,
+                    } => {
+                        bail!(
+                            "Party network destroyed (reason {reason}, detail 0x{error_detail:X})"
+                        );
+                    }
+                    PartyEvent::LocalUserKicked => bail!("kicked from the Party network"),
+                    PartyEvent::RemoteDeviceCreated => tracing::info!("remote device created"),
+                    PartyEvent::RemoteDeviceJoinedNetwork => {
+                        tracing::info!("remote device joined the network")
+                    }
+                    PartyEvent::RemoteDeviceLeftNetwork {
+                        reason,
+                        error_detail,
+                    } => tracing::warn!(reason, error_detail, "remote device left the network"),
+                    PartyEvent::MessageReceived { data, .. } => {
+                        tracing::debug!(len = data.len(), "message from a non-server endpoint")
+                    }
+                    other => tracing::debug!(?other, "party event"),
                 }
-                PartyEvent::EndpointCreated {
-                    endpoint,
-                    entity_id,
-                    is_local,
-                } => {
-                    tracing::debug!(?entity_id, is_local, "endpoint created");
-                    if !is_local
-                        && entity_id
+            }
+
+            // Fallback and diagnostics: look at every endpoint Party knows,
+            // in case the server's never arrives as ENDPOINT_CREATED.
+            if local.is_some() && server.is_none() && now >= next_scan {
+                next_scan = now + Duration::from_secs(3);
+                let devices = party.network_device_count(network).unwrap_or(0);
+                let endpoints = party.network_endpoints(network)?;
+                let seen: Vec<_> = endpoints
+                    .iter()
+                    .map(|(_, id, local)| {
+                        format!(
+                            "{}{}",
+                            id.as_deref().unwrap_or("?"),
+                            if *local { " (us)" } else { "" }
+                        )
+                    })
+                    .collect();
+                tracing::info!(
+                    devices,
+                    endpoints = ?seen,
+                    want = target.server_entity_id,
+                    "waiting for the server endpoint"
+                );
+                if let Some((ep, _, _)) = endpoints.iter().find(|(_, id, is_local)| {
+                    !is_local
+                        && id
                             .as_deref()
                             .is_some_and(|id| id.eq_ignore_ascii_case(&target.server_entity_id))
-                    {
-                        tracing::info!("found the server endpoint");
-                        server = Some(endpoint);
+                }) {
+                    tracing::info!("found the server endpoint by listing");
+                    server = Some(*ep);
+                }
+            }
+
+            if let (Some(_), Some(_), State::Idle) = (local, server, session.state()) {
+                tracing::info!(platform_id, "starting Valheim handshake");
+                session.start(now);
+            }
+            session.poll(now);
+
+            while let Some(ev) = session.next_event() {
+                match ev {
+                    Event::Connected(info) => {
+                        tracing::info!(
+                            server = info.server_name,
+                            world = info.world_name,
+                            version = info.version,
+                            "connected"
+                        );
+                        connected_at = Some(now);
                     }
-                }
-                PartyEvent::EndpointDestroyed { endpoint, reason } if Some(endpoint) == server => {
-                    bail!("server endpoint went away (reason {reason})");
-                }
-                PartyEvent::MessageReceived { sender, data } if Some(sender) == server => {
-                    session.receive(&data, now)?;
-                }
-                PartyEvent::NetworkDestroyed {
-                    reason,
-                    error_detail,
-                } => {
-                    bail!("Party network destroyed (reason {reason}, detail 0x{error_detail:X})");
-                }
-                PartyEvent::LocalUserKicked => bail!("kicked from the Party network"),
-                PartyEvent::RemoteDeviceCreated => tracing::info!("remote device created"),
-                PartyEvent::RemoteDeviceJoinedNetwork => {
-                    tracing::info!("remote device joined the network")
-                }
-                PartyEvent::RemoteDeviceLeftNetwork {
-                    reason,
-                    error_detail,
-                } => tracing::warn!(reason, error_detail, "remote device left the network"),
-                PartyEvent::MessageReceived { data, .. } => {
-                    tracing::debug!(len = data.len(), "message from a non-server endpoint")
-                }
-                other => tracing::debug!(?other, "party event"),
-            }
-        }
-
-        // Fallback and diagnostics: look at every endpoint Party knows,
-        // in case the server's never arrives as ENDPOINT_CREATED.
-        if local.is_some() && server.is_none() && now >= next_scan {
-            next_scan = now + Duration::from_secs(3);
-            let devices = party.network_device_count(network).unwrap_or(0);
-            let endpoints = party.network_endpoints(network)?;
-            let seen: Vec<_> = endpoints
-                .iter()
-                .map(|(_, id, local)| {
-                    format!(
-                        "{}{}",
-                        id.as_deref().unwrap_or("?"),
-                        if *local { " (us)" } else { "" }
-                    )
-                })
-                .collect();
-            tracing::info!(
-                devices,
-                endpoints = ?seen,
-                want = target.server_entity_id,
-                "waiting for the server endpoint"
-            );
-            if let Some((ep, _, _)) = endpoints.iter().find(|(_, id, is_local)| {
-                !is_local
-                    && id
-                        .as_deref()
-                        .is_some_and(|id| id.eq_ignore_ascii_case(&target.server_entity_id))
-            }) {
-                tracing::info!("found the server endpoint by listing");
-                server = Some(*ep);
-            }
-        }
-
-        if let (Some(_), Some(_), State::Idle) = (local, server, session.state()) {
-            tracing::info!(platform_id, "starting Valheim handshake");
-            session.start(now);
-        }
-        session.poll(now);
-
-        while let Some(ev) = session.next_event() {
-            match ev {
-                Event::Connected(info) => {
-                    tracing::info!(
-                        server = info.server_name,
-                        world = info.world_name,
-                        version = info.version,
-                        "connected"
-                    );
-                    connected_at = Some(now);
-                }
-                Event::PlayerList(list) => {
-                    let names: Vec<_> = list.iter().map(|p| p.name.as_str()).collect();
-                    tracing::info!(?names, "player list");
-                    if shouted_at.is_none()
-                        && list.iter().any(|p| p.platform_user_id == platform_id)
-                    {
-                        session.shout(&args.message, now)?;
-                        tracing::info!(message = args.message, "shout sent");
-                        shouted_at = Some(now);
+                    Event::PlayerList(list) => {
+                        let names: Vec<_> = list.iter().map(|p| p.name.as_str()).collect();
+                        tracing::info!(?names, "player list");
+                        if shouted_at.is_none()
+                            && list.iter().any(|p| p.platform_user_id == platform_id)
+                        {
+                            session.shout(&args.message, now)?;
+                            tracing::info!(message = args.message, "shout sent");
+                            shouted_at = Some(now);
+                        }
                     }
+                    Event::Chat { message, .. } => {
+                        println!("[{:?}] {}: {}", message.kind, message.name, message.text);
+                    }
+                    Event::Rejected(status) => bail!("server refused us: {status}"),
+                    Event::PasswordRequired => bail!("server needs a password"),
+                    Event::VersionMismatch {
+                        version,
+                        network_version,
+                    } => {
+                        bail!("server runs {version} (network {network_version}); we speak 1.0.21 (41)")
+                    }
+                    Event::Disconnected => bail!("server disconnected us"),
                 }
-                Event::Chat { message, .. } => {
-                    println!("[{:?}] {}: {}", message.kind, message.name, message.text);
+            }
+
+            // Shout anyway if the player list never showed us.
+            if let (Some(at), None) = (connected_at, shouted_at) {
+                if now >= at + Duration::from_secs(5) {
+                    tracing::warn!("our ID never appeared in the player list; shouting anyway");
+                    session.shout(&args.message, now)?;
+                    shouted_at = Some(now);
                 }
-                Event::Rejected(status) => bail!("server refused us: {status}"),
-                Event::PasswordRequired => bail!("server needs a password"),
-                Event::VersionMismatch {
-                    version,
-                    network_version,
-                } => {
-                    bail!("server runs {version} (network {network_version}); we speak 1.0.21 (41)")
+            }
+
+            if let Some(at) = shouted_at {
+                if session.all_acked() && now >= at + Duration::from_secs(args.linger) {
+                    break Ok(());
                 }
-                Event::Disconnected => bail!("server disconnected us"),
+            } else if now >= deadline {
+                break Err(anyhow::anyhow!(
+                    "timed out after {}s (local endpoint: {}, server endpoint: {}, session: {:?})",
+                    args.timeout,
+                    local.is_some(),
+                    server.is_some(),
+                    session.state()
+                ));
             }
-        }
 
-        // Shout anyway if the player list never showed us.
-        if let (Some(at), None) = (connected_at, shouted_at) {
-            if now >= at + Duration::from_secs(5) {
-                tracing::warn!("our ID never appeared in the player list; shouting anyway");
-                session.shout(&args.message, now)?;
-                shouted_at = Some(now);
+            if let (Some(l), Some(s)) = (local, server) {
+                for msg in session.take_outgoing() {
+                    party.send(l, s, &msg)?;
+                }
             }
+            sleep(Duration::from_millis(10));
         }
-
-        if let Some(at) = shouted_at {
-            if session.all_acked() && now >= at + Duration::from_secs(args.linger) {
-                break Ok(());
-            }
-        } else if now >= deadline {
-            break Err(anyhow::anyhow!(
-                "timed out after {}s (local endpoint: {}, server endpoint: {}, session: {:?})",
-                args.timeout,
-                local.is_some(),
-                server.is_some(),
-                session.state()
-            ));
-        }
-
-        if let (Some(l), Some(s)) = (local, server) {
-            for msg in session.take_outgoing() {
-                party.send(l, s, &msg)?;
-            }
-        }
-        sleep(Duration::from_millis(10));
-    };
+    })();
 
     // Say goodbye so the slot frees at once, then give Party a moment.
     let now = Instant::now();

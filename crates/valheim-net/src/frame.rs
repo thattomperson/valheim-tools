@@ -205,13 +205,27 @@ impl ReliableChannel {
     }
 
     fn process_ack(&mut self, next_expected: u32, now: Instant) -> Result<(), FrameError> {
+        let ahead = next_expected.wrapping_sub(self.acked_tail);
         let mut progressed = false;
-        while self.acked_tail != next_expected {
-            if self.in_flight.pop_front().is_none() {
-                return Err(FrameError::BogusAck);
+        if ahead as usize > self.in_flight.len() {
+            // Seen live against a 1.0.21 server: an ack beyond anything we
+            // sent. Party already delivers reliably and in order, so treat
+            // it as acking everything rather than dropping the link.
+            tracing::debug!(
+                ack = next_expected,
+                acked_tail = self.acked_tail,
+                next_send = self.next_send_seq,
+                "ack ahead of what we sent; treating as ack-all"
+            );
+            progressed = !self.in_flight.is_empty();
+            self.in_flight.clear();
+            self.acked_tail = self.next_send_seq;
+        } else {
+            for _ in 0..ahead {
+                self.in_flight.pop_front();
+                self.acked_tail = self.acked_tail.wrapping_add(1);
+                progressed = true;
             }
-            self.acked_tail = self.acked_tail.wrapping_add(1);
-            progressed = true;
         }
         if progressed {
             self.next_resend = (!self.in_flight.is_empty()).then(|| now + RETRANSMIT_FIRST);
@@ -321,11 +335,15 @@ mod tests {
     }
 
     #[test]
-    fn bogus_ack_is_an_error() {
+    fn ack_ahead_of_sent_acks_everything() {
         let (mut a, _, now) = pair();
+        a.send(TYPE_DATA, b"x", now);
+        a.receive(&[5, 0, 0, 0, TYPE_ACK], now).unwrap();
+        assert_eq!(a.in_flight_bytes(), 0);
+        // Numbering carries on from what we actually sent.
         assert_eq!(
-            a.receive(&[5, 0, 0, 0, TYPE_ACK], now).unwrap_err(),
-            FrameError::BogusAck
+            a.send(TYPE_DATA, b"y", now),
+            vec![b'y', 1, 0, 0, 0, TYPE_DATA]
         );
     }
 }
