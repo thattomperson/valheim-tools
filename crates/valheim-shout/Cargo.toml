@@ -1,0 +1,15 @@
+[package]
+name = "valheim-shout"
+description = "Joins a Valheim crossplay server by join code and sends one chat shout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
+playfab-party.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+valheim-net.workspace = true
+valheim-playfab.workspace = true

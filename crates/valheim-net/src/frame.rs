@@ -141,7 +141,9 @@ impl ReliableChannel {
         wire
     }
 
-    fn ack(&self) -> Vec<u8> {
+    /// A fresh cumulative ack for everything received so far, encoded with
+    /// the current compression setting.
+    pub fn ack(&self) -> Vec<u8> {
         let mut frame = Vec::with_capacity(TRAILER_LEN);
         frame.extend_from_slice(&self.next_recv_seq.to_le_bytes());
         frame.push(TYPE_ACK);

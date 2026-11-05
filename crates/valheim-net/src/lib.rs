@@ -8,4 +8,5 @@ pub mod hash;
 pub mod password;
 pub mod routed;
 pub mod rpc;
+pub mod session;
 pub mod zpackage;
