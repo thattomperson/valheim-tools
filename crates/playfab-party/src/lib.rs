@@ -137,6 +137,13 @@ pub enum Event {
         reason: u32,
     },
     LeaveNetworkCompleted,
+    RemoteDeviceCreated,
+    RemoteDeviceDestroyed,
+    RemoteDeviceJoinedNetwork,
+    RemoteDeviceLeftNetwork {
+        reason: u32,
+        error_detail: u32,
+    },
     /// Any other state change, by `PARTY_STATE_CHANGE_TYPE`.
     Other(u32),
 }
@@ -154,6 +161,8 @@ struct Api {
     network_create_endpoint: FnNetworkCreateEndpoint,
     network_leave_network: FnNetworkLeaveNetwork,
     endpoint_send_message: FnEndpointSendMessage,
+    network_get_endpoints: FnNetworkGetEndpoints,
+    network_get_devices: FnNetworkGetDevices,
     endpoint_get_entity_id: FnEndpointGetEntityId,
     endpoint_is_local: FnEndpointIsLocal,
     start_processing_state_changes: FnStartProcessingStateChanges,
@@ -188,6 +197,8 @@ impl Api {
             network_create_endpoint: sym!("PartyNetworkCreateEndpoint"),
             network_leave_network: sym!("PartyNetworkLeaveNetwork"),
             endpoint_send_message: sym!("PartyEndpointSendMessage"),
+            network_get_endpoints: sym!("PartyNetworkGetEndpoints"),
+            network_get_devices: sym!("PartyNetworkGetDevices"),
             endpoint_get_entity_id: sym!("PartyEndpointGetEntityId"),
             endpoint_is_local: sym!("PartyEndpointIsLocal"),
             start_processing_state_changes: sym!("PartyStartProcessingStateChanges"),
@@ -349,6 +360,42 @@ impl Party {
         self.api.check("PartyNetworkLeaveNetwork", rc)
     }
 
+    /// Every endpoint Party currently knows on `network`, local and remote,
+    /// with its entity ID.
+    pub fn network_endpoints(
+        &self,
+        network: Network,
+    ) -> Result<Vec<(Endpoint, Option<String>, bool)>> {
+        let mut count = 0u32;
+        let mut list: *const Handle = ptr::null();
+        // SAFETY: valid out pointers; the list stays valid until the next
+        // state change processing, and we copy it out now.
+        let rc = unsafe { (self.api.network_get_endpoints)(network.raw(), &mut count, &mut list) };
+        self.api.check("PartyNetworkGetEndpoints", rc)?;
+        let handles: Vec<Handle> = if list.is_null() {
+            Vec::new()
+        } else {
+            unsafe { std::slice::from_raw_parts(list, count as usize) }.to_vec()
+        };
+        Ok(handles
+            .into_iter()
+            .map(|h| {
+                let ep = Endpoint::from_raw(h);
+                (ep, self.endpoint_entity_id(ep), self.endpoint_is_local(ep))
+            })
+            .collect())
+    }
+
+    /// Number of devices (local and remote) Party knows on `network`.
+    pub fn network_device_count(&self, network: Network) -> Result<usize> {
+        let mut count = 0u32;
+        let mut list: *const Handle = ptr::null();
+        // SAFETY: valid out pointers.
+        let rc = unsafe { (self.api.network_get_devices)(network.raw(), &mut count, &mut list) };
+        self.api.check("PartyNetworkGetDevices", rc)?;
+        Ok(count as usize)
+    }
+
     pub fn endpoint_entity_id(&self, endpoint: Endpoint) -> Option<String> {
         let mut s: PartyString = ptr::null();
         // SAFETY: handle from a state change; string owned by Party.
@@ -468,6 +515,16 @@ impl Party {
                 }
             }
             SC_LEAVE_NETWORK_COMPLETED => Event::LeaveNetworkCompleted,
+            SC_REMOTE_DEVICE_CREATED => Event::RemoteDeviceCreated,
+            SC_REMOTE_DEVICE_DESTROYED => Event::RemoteDeviceDestroyed,
+            SC_REMOTE_DEVICE_JOINED_NETWORK => Event::RemoteDeviceJoinedNetwork,
+            SC_REMOTE_DEVICE_LEFT_NETWORK => {
+                let c = &*(sc as *const PARTY_REMOTE_DEVICE_LEFT_NETWORK_STATE_CHANGE);
+                Event::RemoteDeviceLeftNetwork {
+                    reason: c.reason,
+                    error_detail: c.error_detail,
+                }
+            }
             other => Event::Other(other),
         }
     }

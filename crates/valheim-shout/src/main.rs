@@ -194,6 +194,7 @@ fn run_party(args: &ShoutArgs, pf: &PlayFab, target: &JoinTarget) -> Result<()> 
     let mut server: Option<Endpoint> = None;
     let mut connected_at: Option<Instant> = None;
     let mut shouted_at: Option<Instant> = None;
+    let mut next_scan = started;
 
     let outcome = loop {
         let now = Instant::now();
@@ -226,7 +227,11 @@ fn run_party(args: &ShoutArgs, pf: &PlayFab, target: &JoinTarget) -> Result<()> 
                     is_local,
                 } => {
                     tracing::debug!(?entity_id, is_local, "endpoint created");
-                    if !is_local && entity_id.as_deref() == Some(&target.server_entity_id) {
+                    if !is_local
+                        && entity_id
+                            .as_deref()
+                            .is_some_and(|id| id.eq_ignore_ascii_case(&target.server_entity_id))
+                    {
                         tracing::info!("found the server endpoint");
                         server = Some(endpoint);
                     }
@@ -244,7 +249,51 @@ fn run_party(args: &ShoutArgs, pf: &PlayFab, target: &JoinTarget) -> Result<()> 
                     bail!("Party network destroyed (reason {reason}, detail 0x{error_detail:X})");
                 }
                 PartyEvent::LocalUserKicked => bail!("kicked from the Party network"),
-                other => tracing::trace!(?other, "party event"),
+                PartyEvent::RemoteDeviceCreated => tracing::info!("remote device created"),
+                PartyEvent::RemoteDeviceJoinedNetwork => {
+                    tracing::info!("remote device joined the network")
+                }
+                PartyEvent::RemoteDeviceLeftNetwork {
+                    reason,
+                    error_detail,
+                } => tracing::warn!(reason, error_detail, "remote device left the network"),
+                PartyEvent::MessageReceived { data, .. } => {
+                    tracing::debug!(len = data.len(), "message from a non-server endpoint")
+                }
+                other => tracing::debug!(?other, "party event"),
+            }
+        }
+
+        // Fallback and diagnostics: look at every endpoint Party knows,
+        // in case the server's never arrives as ENDPOINT_CREATED.
+        if local.is_some() && server.is_none() && now >= next_scan {
+            next_scan = now + Duration::from_secs(3);
+            let devices = party.network_device_count(network).unwrap_or(0);
+            let endpoints = party.network_endpoints(network)?;
+            let seen: Vec<_> = endpoints
+                .iter()
+                .map(|(_, id, local)| {
+                    format!(
+                        "{}{}",
+                        id.as_deref().unwrap_or("?"),
+                        if *local { " (us)" } else { "" }
+                    )
+                })
+                .collect();
+            tracing::info!(
+                devices,
+                endpoints = ?seen,
+                want = target.server_entity_id,
+                "waiting for the server endpoint"
+            );
+            if let Some((ep, _, _)) = endpoints.iter().find(|(_, id, is_local)| {
+                !is_local
+                    && id
+                        .as_deref()
+                        .is_some_and(|id| id.eq_ignore_ascii_case(&target.server_entity_id))
+            }) {
+                tracing::info!("found the server endpoint by listing");
+                server = Some(*ep);
             }
         }
 
