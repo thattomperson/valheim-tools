@@ -42,6 +42,10 @@ pub const SC_LOCAL_USER_KICKED: u32 = 9;
 pub const SC_CREATE_ENDPOINT_COMPLETED: u32 = 10;
 pub const SC_ENDPOINT_CREATED: u32 = 12;
 pub const SC_ENDPOINT_DESTROYED: u32 = 13;
+pub const SC_REMOTE_DEVICE_CREATED: u32 = 14;
+pub const SC_REMOTE_DEVICE_DESTROYED: u32 = 15;
+pub const SC_REMOTE_DEVICE_JOINED_NETWORK: u32 = 16;
+pub const SC_REMOTE_DEVICE_LEFT_NETWORK: u32 = 17;
 pub const SC_LEAVE_NETWORK_COMPLETED: u32 = 19;
 pub const SC_NETWORK_DESTROYED: u32 = 20;
 pub const SC_ENDPOINT_MESSAGE_RECEIVED: u32 = 21;
@@ -108,6 +112,15 @@ pub struct PARTY_ENDPOINT_DESTROYED_STATE_CHANGE {
 }
 
 #[repr(C)]
+pub struct PARTY_REMOTE_DEVICE_LEFT_NETWORK_STATE_CHANGE {
+    pub state_change: PARTY_STATE_CHANGE,
+    pub reason: u32,
+    pub error_detail: PartyError,
+    pub device: Handle,
+    pub network: Handle,
+}
+
+#[repr(C)]
 pub struct PARTY_NETWORK_DESTROYED_STATE_CHANGE {
     pub state_change: PARTY_STATE_CHANGE,
     pub reason: u32,
@@ -163,6 +176,10 @@ pub type FnEndpointSendMessage = unsafe extern "C" fn(
     *const PARTY_DATA_BUFFER,
     *mut c_void,
 ) -> PartyError;
+pub type FnNetworkGetEndpoints =
+    unsafe extern "C" fn(Handle, *mut u32, *mut *const Handle) -> PartyError;
+pub type FnNetworkGetDevices =
+    unsafe extern "C" fn(Handle, *mut u32, *mut *const Handle) -> PartyError;
 pub type FnEndpointGetEntityId = unsafe extern "C" fn(Handle, *mut PartyString) -> PartyError;
 pub type FnEndpointIsLocal = unsafe extern "C" fn(Handle, *mut PartyBool) -> PartyError;
 pub type FnStartProcessingStateChanges =
@@ -204,6 +221,9 @@ mod tests {
             offset_of!(PARTY_NETWORK_DESTROYED_STATE_CHANGE, network),
             16
         );
+        type Left = PARTY_REMOTE_DEVICE_LEFT_NETWORK_STATE_CHANGE;
+        assert_eq!(offset_of!(Left, device), 16);
+        assert_eq!(offset_of!(Left, network), 24);
         assert_eq!(size_of::<PARTY_DATA_BUFFER>(), 16);
     }
 }
