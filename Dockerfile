@@ -32,9 +32,12 @@ RUN cargo build --release -p valheim-shout
 FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates libpulse0 libpulse-mainloop-glib0 \
+        ca-certificates libatomic1 libpulse0 libpulse-mainloop-glib0 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=party /valheim/valheim_server_Data/Plugins/ /party/
+# Fail the build, not the first run, if libparty.so needs a library we lack.
+RUN missing="$(LD_LIBRARY_PATH=/party ldd /party/libparty.so | grep 'not found' || true)" \
+    && if [ -n "$missing" ]; then echo "libparty.so is missing:"; echo "$missing"; exit 1; fi
 COPY --from=build /src/target/release/valheim-shout /usr/local/bin/valheim-shout
 ENV LIBPARTY=/party/libparty.so \
     LD_LIBRARY_PATH=/party
