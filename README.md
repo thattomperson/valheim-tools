@@ -68,4 +68,8 @@ docker run --rm valheim-shout party-check
 docker run --rm -e VALHEIM_PASSWORD=... valheim-shout shout --code 123456 --message hi
 ```
 
+Pushes to `main` and `v*` tags publish the image to
+`ghcr.io/thattomperson/valheim-tools` (`latest`, branch, version and `sha-` tags).
+Pull requests build it without pushing.
+
 The same image is the starting point for the Fly.io service.
