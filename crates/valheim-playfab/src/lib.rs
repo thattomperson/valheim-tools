@@ -35,6 +35,16 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// PlayFab `LobbyPlayerAlreadyJoined`.
+pub const ERROR_LOBBY_PLAYER_ALREADY_JOINED: i64 = 13002;
+
+impl Error {
+    /// True for `JoinLobby` failing because we're already in the lobby.
+    pub fn is_already_member(&self) -> bool {
+        matches!(self, Error::Api { code, .. } if *code == ERROR_LOBBY_PLAYER_ALREADY_JOINED)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityKey {
     #[serde(rename = "Id")]
@@ -287,7 +297,16 @@ impl Client {
                 detail: "lobby has no string_key1 (server entity)".into(),
             })?
             .to_owned();
-        let lobby_id = self.join_lobby(&summary.connection_string)?;
+        let lobby_id = match self.join_lobby(&summary.connection_string) {
+            Ok(id) => id,
+            // A previous run died without LeaveLobby; our membership is
+            // still valid, so carry on with the lobby we found.
+            Err(e) if e.is_already_member() => {
+                tracing::info!("already a member of the lobby, reusing it");
+                summary.lobby_id.clone()
+            }
+            Err(e) => return Err(e),
+        };
         let lobby_data = match self.get_lobby_data(&lobby_id) {
             Ok(d) => d,
             Err(e) => {
@@ -326,6 +345,18 @@ mod tests {
             join_code_filter("12' or 1 eq 1"),
             "string_key4 eq '12or1eq1' and string_key2 eq 'True'"
         );
+    }
+
+    #[test]
+    fn already_member_is_recognised() {
+        let e = Error::Api {
+            endpoint: "/Lobby/JoinLobby",
+            status: 409,
+            code: 13002,
+            message: "The lobby player is already a member".into(),
+        };
+        assert!(e.is_already_member());
+        assert!(!Error::NoNetwork.is_already_member());
     }
 
     #[test]
