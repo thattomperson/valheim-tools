@@ -57,10 +57,15 @@ is the PlayFab custom ID and the platform ID the server sees. Override it with
 
 ### With Docker
 
+The image downloads `libparty.so` itself: a build stage fetches just the
+server's `Plugins` folder from Steam with
+[DepotDownloader](https://github.com/SteamRE/DepotDownloader), using an
+anonymous login.
+
 ```sh
 docker build -t valheim-shout .
-docker run --rm -v /path/to/Plugins:/party:ro -e VALHEIM_PASSWORD=... \
-  valheim-shout shout --code 123456 --message hi
+docker run --rm valheim-shout party-check
+docker run --rm -e VALHEIM_PASSWORD=... valheim-shout shout --code 123456 --message hi
 ```
 
 The same image is the starting point for the Fly.io service.
